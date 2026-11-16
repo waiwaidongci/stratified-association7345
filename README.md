@@ -8,7 +8,7 @@
 
 | 角色 | 页面与权限 | 典型动作 |
 |---|---|---|
-| analyst 分层分析员 | 六页读取、来源修订、排队及说明创建 | 修订来源后冻结所有预设层 |
+| analyst 分层分析员 | 七页读取、来源修订、排队、敏感性复核及说明创建 | 修订来源后冻结所有预设层 |
 | admin 试验负责人 | 分析员权限及说明批准/退回 | 仅对draft作一次审阅 |
 | viewer 研究阅读者 | 只读、批准说明CSV | 下载附原始四格、完整支持域及指纹的报告 |
 
@@ -33,7 +33,7 @@ docker compose down -v --remove-orphans
 
 ## 页面与实体
 
-首页展示最新完成研究；分层底稿可建立研究/预设层并写入四格、来源和批注；冻结计算提交任务；结果页读取层内率、CMH与全部精确支持；复验说明经负责人审阅后导出；过程留痕展示持久化动作。
+首页展示最新完成研究；分层底稿可建立研究/预设层并写入四格、来源和批注；冻结计算提交任务；结果页读取层内率、CMH与全部精确支持；敏感性复核在冻结四格上枚举固定边际互换；复验说明经负责人审阅后导出；过程留痕展示持久化动作。
 
 | 实体 | 表 | 全栈入口 |
 |---|---|---|
@@ -41,9 +41,10 @@ docker compose down -v --remove-orphans
 | ExposureStratum | exposure_strata | stratum对应文件 → /strata → api/strata.ts → 来源与冻结结果 |
 | TableCount | table_counts | count对应文件 → /counts → api/counts.ts → 四格表与编辑 |
 | AssociationRun | association_runs | run对应文件 → /runs → stores/research.ts → 队列与完整结果 |
+| SensitivityRun | sensitivity_runs | sensitivity对应文件 → /sensitivities → api/sensitivities.ts → 枚举队列与冻结复核 |
 | VerificationNote | verification_notes | note对应文件 → /notes → api/notes.ts → 起草、审阅与CSV |
 
-以上后台路径均在backend/src；前端在frontend/src。另有User/Audit横切表。共享组件包括StudySelect、RunSelect、StratumTable、RateStrips、ExactDistribution、PageHeading、StatusBadge及ErrorNotice；useTask处理错误、usePolling刷新进行中任务。统计量均由后端计算；前端只将服务器返回数值映射到图形。
+以上后台路径均在backend/src；前端在frontend/src。另有User/Audit横切表。共享组件包括StudySelect、RunSelect、StratumTable、RateStrips、ExactDistribution、CorrectionCard、PageHeading、StatusBadge及ErrorNotice；useTask处理错误、usePolling刷新进行中任务。统计量均由后端计算；前端只将服务器返回数值映射到图形。
 
 ## 数学与数值口径
 
@@ -53,11 +54,17 @@ docker compose down -v --remove-orphans
 
 生产计算用logpmf、longdouble指数和卷积。极小概率转换为JSON double会下溢时，数值字段为null并标记underflow，仍保留科学计数文本与有限log；CMH渐近p通过log normal tail避免误呈现为0。longdouble精度取决于平台，不宣称无限精度。各层计数非负整数、每格≤500/每层总数1..1000、每研究2..8完整层、卷积支持域≤1201点；超资源或无有效统计量明确失败。
 
+### 固定边际互换敏感性
+
+敏感性复核先冻结原研究的层、四格、α与基线指纹，再按每层`k∈[max(−L,−a,−d), min(L,b,c)]`枚举修正：k>0 把B的一次成功改为A成功并把A的一次失败改为B失败，k<0 反向；修正后`(a+k,b−k,c−k,d+k)`保持层总数与行列边际。每层上限L由请求给定（0..500），全部组合数超过200000或支持域超过1201点时拒绝冻结。
+
+对每个修正重算共同OR方向（整数分子/分母精确比较）、CMH统计量与均值距离双侧精确p。条件分布以整数超几何权重卷积一次，尾概率为整数权重之和除以共同分母，因此p的最小/最大与并列数不受浮点并列影响；JSON同时保存科学计数文本与log。结果给出基线方向计数、方向翻转数与示例、p与CMH的最小/最大修正及各自组合数。枚举只描述结论敏感性，不是新的确证检验；原研究记录不被改写，结果页、获批说明与CSV回读同一份冻结结果，不重跑枚举。
+
 参考：[statsmodels分层2×2与独立采样模型](https://www.statsmodels.org/stable/generated/statsmodels.stats.contingency_tables.StratifiedTable.html)、[SciPy超几何分布](https://docs.scipy.org/doc/scipy-1.14.1/reference/generated/scipy.stats.hypergeom.html)。本项目选择的均值距离精确双侧规则已在界面和CSV另行声明。
 
 ## 快照、seed与环境
 
-三份合成底稿：CN-REV两层率反转；CN-SPARSE四层稀疏对照；CN-NULL三层含无A样本层。初始3用户/3研究/9层/9计数/1完成研究/1批准说明。提交任务时冻结研究、层、计数、来源与批注；worker只算快照，源计数事后变化不改变旧结果和批准CSV。seed按自然键仅添加缺失项，不覆盖用户改动。
+三份合成底稿：CN-REV两层率反转；CN-SPARSE四层稀疏对照；CN-NULL三层含无A样本层。初始3用户/3研究/9层/9计数/1完成研究/1已完成敏感性复核/1批准说明+1待审阅说明。提交任务时冻结研究、层、计数、来源与批注；敏感性复核另存原研究编号、基线指纹与互换上限；worker只算快照，源计数事后变化不改变旧结果、敏感性枚举和批准CSV。seed按自然键仅添加缺失项，不覆盖用户改动。
 
 | 环境变量 | 用途 |
 |---|---|
@@ -71,10 +78,10 @@ Python3.11/FastAPI0.115.6/SQLAlchemy2.0.36/PyMySQL1.1.1、NumPy2.1.3/SciPy1.14.1
 
 本地开发：启动MySQL/Redis后配置DATABASE_URL、REDIS_URL和JWT_SECRET，停止占用本地开发端口的Compose应用服务，在backend安装requirements并运行`uvicorn src.main:app --host 127.0.0.1 --port 19239 --reload`；停止Compose前端后在frontend执行`npm ci`和`npm run dev`，浏览器使用Vite打印地址。vite.config.ts代理/api到本题后端。
 
-共享枚举：backend/src/constants/enums.py中的Role/RunStatus/NoteStatus；frontend/src/constants/enums.ts中的roles/states及types/domain.ts角色定义；后端middlewares/auth.py与前端stores/auth.ts分别应用权限。请求防护为本应用Redis每IP每分钟360请求，健康探针豁免，Redis不可用返回503；错误响应不回显非法浮点input。审计保存登录、来源修订、排队、worker完成、审阅和导出。
+共享枚举：backend/src/constants/enums.py中的Role/RunStatus/NoteStatus；frontend/src/constants/enums.ts中的roles/states及types/domain.ts角色定义；后端middlewares/auth.py与前端stores/auth.ts分别应用权限。请求防护为本应用Redis每IP每分钟360请求，健康探针豁免，Redis不可用返回503；错误响应不回显非法浮点input。审计保存登录、来源修订、排队、worker完成、审阅、敏感性复核创建/完成及导出。
 
 ## 范围与交付
 
-共同OR是加权汇总，本项目没有Breslow–Day同质性检验；层差异大时不能把它当普遍相同效果。层内观察独立、边际固定的条件零假设需由试验设计支持；未随机化不作因果解释，未拒绝不证明等效。只有本机单worker研究队列，未验证崩溃重投、多worker竞态或生产压力；初始化采用create_all，不含生产升级链。不是检测仪采集或任意文件自动导入，来源字段仅保留追溯元数据。Google字体有本地serif回退。
+共同OR是加权汇总，本项目没有Breslow–Day同质性检验；层差异大时不能把它当普遍相同效果。层内观察独立、边际固定的条件零假设需由试验设计支持；未随机化不作因果解释，未拒绝不证明等效。只有本机单worker研究队列，未验证崩溃重投、多worker竞态或生产压力；敏感性枚举在200000组合、1201支持点上限内同步完成，超限在冻结前拒绝，未做分布式枚举。初始化采用create_all，不含生产升级链。不是检测仪采集或任意文件自动导入，来源字段仅保留追溯元数据。Google字体有本地serif回退。
 
 源码不含截图、测试日志或.env。真实验证脚本/TESTING/PNG/CSV/JSON在同批独立`test-artifacts/gb-0035/`，作为验收证据单独交付。License：MIT，见LICENSE。

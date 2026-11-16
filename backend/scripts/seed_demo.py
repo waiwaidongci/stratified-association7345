@@ -1,9 +1,10 @@
 from sqlalchemy import select,func
 from src.config.database import Base,engine,SessionLocal
-from src.models import User,AssociationStudy,ExposureStratum,TableCount,AssociationRun,VerificationNote
+from src.models import User,AssociationStudy,ExposureStratum,TableCount,AssociationRun,VerificationNote,SensitivityRun
 from src.utils.security import hash_password
 from src.services.run_service import snapshot
 from src.services.analysis_algorithm import analyze
+from src.services.sensitivity_algorithm import analyze_sensitivity
 
 def seed():
  Base.metadata.create_all(engine)
@@ -25,5 +26,12 @@ def seed():
   if not run:
    snap=snapshot(db,study.id);run=AssociationRun(name='湿度构成 · 首轮分层核对',study_id=study.id,alpha=.05,created_by=user.id,input_snapshot=snap,result=analyze(snap,.05),status='completed');db.add(run);db.flush()
   if not db.scalar(select(VerificationNote).where(VerificationNote.title=='先分层，再讨论总体率')):db.add(VerificationNote(title='先分层，再讨论总体率',run_id=run.id,interpretation='两层内A成功率均较高，但样本湿度构成不同导致总体率方向相反。共同OR是分层加权摘要，不是封装因果效果。',action='保留各湿度层独立重复试片，按预先方案核对封装和浸湿时间。',status='approved',approved_by='admin@cenan.demo',review_comment='统计层边际与精确双侧定义已核对，批准独立复验记录。',created_by=user.id))
-  db.commit();print({t.__tablename__:db.scalar(select(func.count()).select_from(t)) for t in [User,AssociationStudy,ExposureStratum,TableCount,AssociationRun,VerificationNote]})
+  sensitivity=db.scalar(select(SensitivityRun).where(SensitivityRun.name=='湿度构成 · 每层一对互换复核'))
+  if not sensitivity and run.result:
+   frozen={'study':run.input_snapshot['study'],'tables':run.input_snapshot['tables'],'alpha':run.alpha,'swap_limit':1,
+           'source':{'base_run_id':run.id,'base_name':run.name,'base_fingerprint':run.result.get('fingerprint',''),'base_method_version':run.result.get('method_version','')}}
+   sensitivity=SensitivityRun(name='湿度构成 · 每层一对互换复核',base_run_id=run.id,base_fingerprint=frozen['source']['base_fingerprint'],swap_limit=1,input_snapshot=frozen,result=analyze_sensitivity(frozen),status='completed',created_by=user.id)
+   db.add(sensitivity);db.flush()
+  if not db.scalar(select(VerificationNote).where(VerificationNote.title=='少量误判下的敏感性复核')):db.add(VerificationNote(title='少量误判下的敏感性复核',run_id=run.id,sensitivity_run_id=sensitivity.id if sensitivity else None,interpretation='在每层固定边际内各互换一对成功/失败后，共同OR方向与精确p出现可见波动；原冻结结果不变，本次枚举只描述结论的敏感性。',action='对边界试片复核判读并补充独立试片，仍按预设湿度层记录四格。',status='draft',created_by=user.id))
+  db.commit();print({t.__tablename__:db.scalar(select(func.count()).select_from(t)) for t in [User,AssociationStudy,ExposureStratum,TableCount,AssociationRun,SensitivityRun,VerificationNote]})
 if __name__=='__main__':seed()

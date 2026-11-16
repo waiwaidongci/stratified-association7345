@@ -7,6 +7,7 @@ class VerificationNote(Base):
  id:Mapped[int]=mapped_column(primary_key=True)
  title:Mapped[str]=mapped_column(String(160),unique=True)
  run_id:Mapped[int]=mapped_column(ForeignKey('association_runs.id'))
+ sensitivity_run_id:Mapped[int|None]=mapped_column(ForeignKey('sensitivity_runs.id'),nullable=True,default=None)
  interpretation:Mapped[str]=mapped_column(String(2000))
  action:Mapped[str]=mapped_column(String(1200))
  status:Mapped[str]=mapped_column(String(20),default='draft')

@@ -5,3 +5,4 @@ from .stratum import ExposureStratum
 from .count import TableCount
 from .run import AssociationRun
 from .note import VerificationNote
+from .sensitivity import SensitivityRun
